@@ -3,6 +3,7 @@ import pandas
 import pytz
 import datetime as dt
 from datetime import datetime, timedelta
+from pandas import concat
 #from pandas import Series, TimeSeries, DataFrame, Panel
 
 #2013-11-04 :: 2013-11-06 (3 Trading Days)
@@ -28,12 +29,14 @@ def initialize(context):
          
     context.nextDate = None
     context.bars = None
-    context.lastDate = dt.datetime(2013, 11, 8, 21, 0, 0, 0, pytz.utc)
+    context.barsPeriod = None
+    context.lastDate = dt.datetime(2013, 10, 18, 20, 0, 0, 0, pytz.utc) # NOTE May be 20 or 21 depending
+    context.metricPeriodCount = 0
     
-def getStock(context, data):
+    # Period Volatility and Performance period in DAYS
+    context.metricPeriod = 63 # 3 months LOOKBACK
+    context.periodVolatility = 21 # Volatility period. Chose a MULTIPLE of metricPeriod
     
-    print data[0]
-    print data[-1]
     
 '''
   The main proccessing function.  This is called and passed data
@@ -41,26 +44,34 @@ def getStock(context, data):
 def handle_data(context, data):  
     
     now = get_datetime()
-                
-    if context.nextDate is not None:
-        if now == context.lastDate:
-            context.bars = accumulateData(data)
-        if now.day == context.nextDate.day or now == context.lastDate:
-            #print('now day %s is the nextdate day %s' % (now, context.nextDate))
-            #print 'process previous day'
-            print context.bars
-            context.bars = None
+    
+    if context.nextDate is not None:                    
+        if now >= context.nextDate or now == context.lastDate:
+            if now == context.lastDate:
+                context.bars = accumulateData(data)
+            
             context.nextDate = None
+            context.metricPeriodCount += 1
+            
+            if context.barsPeriod is None:
+                context.barsPeriod = context.bars
+            else:
+                context.barsPeriod = concat([context.barsPeriod, context.bars])
+                
+            # Process collected metricPeriod
+            if context.metricPeriodCount == context.metricPeriod:
+                print context.barsPeriod
+                context.barsPeriod = None
+                context.metricPeriodCount = 0
         
-    bars = accumulateData(data)
+    context.bars = accumulateData(data)
 
-    if bars is None:
+    if context.bars is None:
         return
     
-    context.bars = bars
-
     if context.nextDate is None:
         context.nextDate = dt.datetime(int(now.year), int(now.month), int(now.day), 0, 0, 0, 0, pytz.utc) + dt.timedelta(days=1)
+        #print('now %s, nextDate %s' % (now, context.nextDate))
     
     #print type(bars['open_price'][12915]) # TimeSeries
     #print type(bars['open_price']) # DataFrame
