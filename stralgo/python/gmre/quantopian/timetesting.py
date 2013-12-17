@@ -28,6 +28,7 @@ def initialize(context):
          
     context.nextDate = None
     context.bars = None
+    context.lastDate = dt.datetime(2013, 11, 8, 21, 0, 0, 0, pytz.utc)
     
 def getStock(context, data):
     
@@ -42,7 +43,9 @@ def handle_data(context, data):
     now = get_datetime()
                 
     if context.nextDate is not None:
-        if now.day == context.nextDate.day:
+        if now == context.lastDate:
+            context.bars = accumulateData(data)
+        if now.day == context.nextDate.day or now == context.lastDate:
             #print('now day %s is the nextdate day %s' % (now, context.nextDate))
             #print 'process previous day'
             print context.bars
