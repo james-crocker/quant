@@ -85,4 +85,46 @@ def handle_data(context, data):
     #stock = getStock(context, datapanel['close_price'][12915])
     return
 
+
+        # Calculate daily performance
+        p[s.sid] = (C - O)/O
+        if s.sid == 40513:
+            print('[%s] O %s, C %s, H %s, L %s' % (s, O, C, H, L))
+        
+        # http://www.tsresearch.com/public/volatility/historical/
+        if algo == 'RS':
+            # Calculate the daily Roger and Satchell volatility
+            # Since 'daily' the 1/T is skipped
+            a = math.log(H/C)
+            b = math.log(H/O)
+            c = math.log(L/C)
+            d = math.log(L/O)
+            r = (a * b) + (c * d)
+            v[s.sid] = math.sqrt(r)
+        elif algo == 'GK':
+            # Calculate the daily Garman & Klass volatility
+            # Since 'daily' the 1/T is skipped
+            a = 0.511 * math.pow((math.log(H/L)), 2)
+            b = 0.019 * math.log(C/O) * math.log((H*L)/math.pow(O, 2))
+            c = 2.0 * math.log(H/O) * math.log(L/O)
+            r = a - b - c
+            v[s.sid] = math.sqrt(r)
+        elif algo == 'PA':
+            # Calculate the daily Parkinson volatility
+            # Since 'daily' the 4^T is skipped
+            a = math.pow(math.log(H/L), 2)
+            b = 1 / (4 * math.log(2))
+            r = b * a
+            v[s] = math.sqrt(r)
+        else:    
+            # Calculate the classical daily volatility
+            # Since 'daily' the 1/T is skipped
+            a = H - L
+            b = H + L
+            v[s.sid] = a/b
+      
+        #print('[%s] open %s, close %s, max %s, min %s' % (s, O, C, H, L))
+        #print('[%s] PERF %s, RS %s, GK %s, PA %s, DV %s' % (s, perf[s], vRS[s], vGK[s], vPA[s], vDV[s]))
+        
+    return p, v   
     

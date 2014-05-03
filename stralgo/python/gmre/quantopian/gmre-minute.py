@@ -33,6 +33,7 @@
 # Quantopian Author: James Crocker, 2013-11-14 james@constantsc.net
 
 import math
+import numpy
 import pandas
 import pytz
 import datetime as dt
@@ -43,28 +44,31 @@ from collections import defaultdict
 
 #2013-11-04 :: 2013-11-06 (3 Trading Days)
 
-# window_length SHOULD EQUAL context.metricPeriod
+# window_length SHOULD EQUAL context.metric_period
 # BUG with getting daily windows of minute data:
 # https://www.quantopian.com/posts/batch-transform-in-minute-backtests
+
 @batch_transform(window_length=1, refresh_period=0)
-def accumulateData(data):
+def accumulate_data(data):
     return data
 
+def tree():
+    return defaultdict(tree)
+
 def initialize(context):
-    
-    context.lastDate = dt.datetime(2013, 11, 29, 20, 0, 0, 0, pytz.utc) # NOTE May be 20 or 21 depending
-    context.algoVolatility = 'RS' # Process previous days metrics 'RS|GK|PA|DV' DEFAULT is DV
+    context.date_backtest_end = dt.datetime(2013, 11, 29, 20, 0, 0, 0, pytz.utc) # NOTE May be 20 or 21 depending
+    context.algo_volatility = 'RS' # Process previous days metrics 'RS|GK|PA|CE'
     # Period Volatility and Performance period in DAYS
-    context.metricPeriod = 42 # 3 months (days) LOOKBACK
-    context.metricBuyPeriod = 21 # Buy period (days)
-    ##context.metricPeriodMean = 2 # Volatility period. Chose a MULTIPLE of metricPeriod
+    context.metric_period = 42 # 3 months (days) LOOKBACK
+    context.metric_period_buy = 21 # Buy period (days)
+    ##context.metric_periodMean = 2 # Volatility period. Chose a MULTIPLE of metric_period
     # Set Performance vs. Volatility factors (7.0, 3.0 from Grossman GMRE
-    context.factorPerformance = 0.7
-    context.factorVolatility = 0.3
+    context.factor_performance = 0.7
+    context.factor_volatility = 0.3
     # Re-enact pricing from original Quast code
-    context.orderBuyLimits = False
-    context.orderSellLimits = False
-    context.priceBuyFactor = 0.0
+    context.order_limits_buy = False
+    context.order_limits_sell = False
+    context.factor_price_buy = 0.0
       
     context.basket = {
         12915: sid(12915), # MDY (SPDR S&P MIDCAP 400)
@@ -77,51 +81,40 @@ def initialize(context):
     }
     
     # Set/Unset logging features for verbosity levels
-    context.logWarn = False
-    context.logBuy = False
-    context.logSell = False
-    context.logHold = True
-    context.logRank = False
-    context.logDebug = False
+    context.log_warn = False
+    context.log_buy = False
+    context.log_sell = False
+    context.log_hold = True
+    context.log_rank = True
+    context.log_debug = False
          
-    context.nextDate = None
+    context.date_next = None
     context.bars = None
-    context.basketStockBest = None
-    context.basketPeriodOchlv = []
-    context.basketStocksActive = []
-    context.p = {}; context.v = {} 
-    context.oidBuy = None
-    context.oidSell = None
-    context.cashStart = None
-    context.dateStart = None
-    context.buyCount = 0
-    context.sellCount = 0
-    context.basketAnalyzed = False
-    context.currentStock = None
-
+    context.basket_stocks_best = None
+    context.basket_period_ochlv = []
+    context.basket_stocks_active = []
+    context.oid_buy = None
+    context.oid_sell = None
+    context.begin_cash = None
+    context.begin_date = None
+    context.count_buy = 0
+    context.count_sell = 0
+    context.basket_analyzed = False
+    context.stock_current = None
     
-def tree(): return defaultdict(tree)
-    
-def getMinMax(arr):
+def get_min_max(arr):
     return min(arr.values()), max(arr.values())
-
-def extendList(d1, d2):
-    for s2 in d2:
-        if s2 not in d1:
-            d1.update({s2: [d2[s2]]})
-        else:
-            d1[s2].extend([d2[s2]])
             
-def getFiniteBars(context):
-    basket = context.basketStocksActive
+def get_finite_bars(context):
+    basket = context.basket_stocks_active
     bars = context.bars
-    finiteBars = tree()
+    bars_finite = tree()
     
     for s in basket:
         for item in bars:
-            finiteBars[item][s.sid] = [price for price in bars[item][s.sid] if not math.isnan(price)]
+            bars_finite[s.sid][item] = [price for price in bars[item][s.sid] if not math.isnan(price)]
             
-    if context.logWarn is True:
+    if context.log_warn is True:
         for s in basket:
             for item in bars:
                 count = 0
@@ -130,185 +123,207 @@ def getFiniteBars(context):
                         print('[%s] FOUND %s AT %s' % (s.sid, val, bars[item][s.sid].index[count]))
                     count += 1
             
-    return finiteBars
+    return bars_finite
         
-def basketPeriodOchlv(context):
+def get_basket_period_ochlv(context):    
+    # Converts the MINUTE intra-day trading data into a DAYS OCHL and VOLUME data
+    # Removes NaN data using finite data only
+    basket = context.basket_stocks_active
+    ochlv = tree()
     
-    basket = context.basketStocksActive
-    basketPeriodOchlv = tree()
+    bars_finite = get_finite_bars(context)
     
-    finiteBars = getFiniteBars(context)    
-                
     for s in basket:
-        H = max(finiteBars['high'][s.sid])
-        L = min(finiteBars['low'][s.sid])
-        O = finiteBars['close_price'][s.sid][0]
-        C = finiteBars['close_price'][s.sid][-1]
-        V = sum(finiteBars['volume'][s.sid])
+        ochlv[s.sid]['price']['open'] = bars_finite[s.sid]['open_price'][0] # Closest to actual open_price at market open
+        ochlv[s.sid]['price']['close'] = bars_finite[s.sid]['close_price'][-1]
+        ochlv[s.sid]['price']['high'] = max(bars_finite[s.sid]['high'])
+        ochlv[s.sid]['price']['low'] = min(bars_finite[s.sid]['low'])
 
-        #print('[%s] O %s, C %s, H %s, L %s, V %s' % (s.sid, O, C, H, L, V))
+        ochlv[s.sid]['volume']['open'] = bars_finite[s.sid]['volume'][0] # Closest to actual open_price at market open
+        ochlv[s.sid]['volume']['close'] = bars_finite[s.sid]['volume'][-1]
+        ochlv[s.sid]['volume']['high'] = max(bars_finite[s.sid]['volume'])
+        ochlv[s.sid]['volume']['low'] = min(bars_finite[s.sid]['volume'])        
 
-        #print bars
-        #prices = bars['close_price'][s.sid]
-        #O = prices[0]
-        #C = prices[-1]
-        #H = prices.max()
-        #L = prices.min()
+        #p = ochlv[s.sid]['price']
+        #v = ochlv[s.sid]['volume']        
+        #log.info('[%s] PRICE O %s, C %s, H %s, L %s VOLUME O %s, C %s, H %s, L %s' % (s.sid, p['open'], p['close'], p['high'], p['low'], v['open'], v['close'], v['high'], v['low']))
+            
+    return ochlv
 
-        basketPeriodOchlv[s.sid]['open'] = O
-        basketPeriodOchlv[s.sid]['close'] = C
-        basketPeriodOchlv[s.sid]['high'] = H
-        basketPeriodOchlv[s.sid]['low'] = L
-        basketPeriodOchlv[s.sid]['volume'] = V
+def get_basket_price_performance(context):
+    values = context.basket_period_ochlv
+    basket = context.basket_stocks_active
+    performances = tree()
     
-    return basketPeriodOchlv
+    # Gather period performance
+    for s in basket:
+        price_begin = values[0][s.sid]['price']['close']
+        price_end = values[-1][s.sid]['price']['close']
+        performances[s.sid]['price']['performance'] = (price_begin - price_end) / price_begin
+        
+    return performances
 
-def getVolatility(context, prices):
-    
-    algo = context.algoVolatility
-
-    O = prices['open']
-    C = prices['close']
-    H = prices['high']
-    L = prices['low']
-    
-    v = None
-    
+def get_volatility(algo, stock, metric, ochlv):
     # http://www.tsresearch.com/public/volatility/historical/
+    # http://www.morningstar.com/InvGlossary/historical_volatility.aspx
+    # http://en.wikipedia.org/wiki/Volatility_(finance)   
+    O = ochlv[stock][metric]['open']
+    C = ochlv[stock][metric]['close']
+    H = ochlv[stock][metric]['high']
+    L = ochlv[stock][metric]['low']
+                        
     if algo == 'RS':
         # Calculate the daily Roger and Satchell volatility
-        # Since 'daily' the 1/T is skipped
-        a = math.log(H/C)
-        b = math.log(H/O)
-        c = math.log(L/C)
-        d = math.log(L/O)
-        r = (a * b) + (c * d)
-        v = math.sqrt(r)
+        return (math.log(H / C) * math.log(H / O)) + (math.log(L / C) * math.log(L / O))
     elif algo == 'GK':
         # Calculate the daily Garman & Klass volatility
-        # Since 'daily' the 1/T is skipped
-        a = 0.511 * math.pow((math.log(H/L)), 2)
-        b = 0.019 * math.log(C/O) * math.log((H*L)/math.pow(O, 2))
-        c = 2.0 * math.log(H/O) * math.log(L/O)
-        r = a - b - c
-        v = math.sqrt(r)
+        a = 0.511 * math.pow((math.log(H / L)), 2)
+        b = 0.019 * math.log(C / O) * math.log((H * L) / math.pow(O, 2))
+        c = 2.0 * math.log(H / O) * math.log(L / O)
+        return a - b - c
     elif algo == 'PA':
-        # Calculate the daily Parkinson volatility
-        # Since 'daily' the 4^T is skipped
-        a = math.pow(math.log(H/L), 2)
-        b = 1 / (4 * math.log(2))
-        r = b * a
-        v = math.sqrt(r)
-    else:    
-        # Calculate the classical Daily Volatility
-        # Since 'daily' the 1/T is skipped
-        a = H - L
-        b = H + L
-        v = a/b
-        
-    return v
-    
+        # Calculate the daily Parkinson volatility 
+        return math.pow(math.log(H / L), 2)
+    elif algo == 'CE':
+        return C
+    else:
+        return None
 
-def getBasketPeriodMetrics(context):
-    
-    basketPeriodOchlv = context.basketPeriodOchlv
-    
-    beginOpen = {}; endClose = {}; p = {}; v = {}
-        
-    for values in basketPeriodOchlv:
-        for sid in values:
-            endClose[sid] = values[sid]['close']
-            if sid not in beginOpen:
-                beginOpen[sid] = values[sid]['open']
-            if sid not in v:
-                v[sid] = []
+def get_volatility_period(algo, period, v):
+    # http://www.tsresearch.com/public/volatility/historical/
+    # http://www.morningstar.com/InvGlossary/historical_volatility.aspx
+    # http://en.wikipedia.org/wiki/Volatility_(finance)
+    annualization = math.sqrt(252)
+     
+    if algo == 'CE':
+        return numpy.std(v) * annualization
+    elif algo == 'PA':
+        return math.sqrt((sum(v) / (math.pow(4, period) * math.log(2)))) * annualization
+    else:
+        return math.sqrt(sum(v) / period) * annualization
+                                      
+def get_basket_period_metrics(context):
+    # Generate volatility data for a given period then average over the period
+    values = context.basket_period_ochlv
+    basket = context.basket_stocks_active
+    period_buy = context.metric_period_buy # Shorter '21'
+    period_lookback = context.metric_period + period_buy # Longer '63'
+    period = period_lookback / period_buy
+    metric_group = ['price', 'volume']
+    algo_group = ['RS', 'GK', 'PA', 'CE']
+
+    # Gather period lookback performance
+    metrics = get_basket_price_performance(context)
+    #for s in [12915, 23134]:
+    #    print('[%s] %s PERFORMANCE %s' % (s, 'price', metrics[s]['price']['performance']))
+
+    # Gather the buy period volatility
+    vp = tree() # period volatility
+    for vol_period in xrange(0, period):
+
+        begin = vol_period * period_buy
+        end = begin + period_buy
+                    
+        # Get PRICE and VOLUME volatilities
+        for metric in metric_group:            
+            for s in basket:
+                for algo in algo_group:
+                    vd = [] # daily volatility
+                    for ochlv in values[begin:end]:                                                        
+                        vd.append(get_volatility(algo, s.sid, metric, ochlv))
+            
+                    if not vp[s.sid][metric][algo]:
+                        vp[s.sid][metric][algo] = []
+                    
+                    vp[s.sid][metric][algo].append(get_volatility_period(algo, period_buy, vd)) # Accumulate the period volatility (generally 20 days)   
                 
-            print('[%s] VOLUME %s' % (sid, values[sid]['volume']))
-            
-            # Calculate period volatility
-            v[sid].append(getVolatility(context, values[sid]))
-            
-    for sid in beginOpen:
-        p[sid] = (endClose[sid] - beginOpen[sid]) / beginOpen[sid]
-            
-    return p, v
+    # Average of period volatilities               
+    for metric in metric_group:     
+        for s in basket:
+            for algo in algo_group:
+                metrics[s.sid][metric]['volatility'][algo] = sum(vp[s.sid][metric][algo]) / period
+                #if s.sid == 12915 or s.sid == 23134:
+                #    print('[%s] %s VOLATILITY [%s] %s' % (s.sid, metric, algo, metrics[s.sid][metric]['volatility'][algo]))
+                
+    return metrics
 
-def getBestStock(context, p, v, volume):
-           
-    #if context.metricPeriodMeanCount <= context.metricPeriod / context.metricPeriod
-    performances = {}; volatilities = {}; stockRanks = {}; bestStock = None
+def get_stock_best(context, metrics):
+    #if context.metric_periodMeanCount <= context.metric_period / context.metric_period
+    basket = context.basket_stocks_active
+    algo = context.algo_volatility
+    p_factor = context.factor_performance
+    v_factor = context.factor_volatility
     
-    basket = context.basketStocksActive
-    period = context.metricPeriod
-    pFactor = context.factorPerformance
-    vFactor = context.factorVolatility    
+    stock_ranks = {}
+    stock_best = None   
+    
+    performances = {}
+    volatilities = {} 
                 
     for s in basket:
-        performances[s.sid] = p[s.sid]
-        volatilities[s.sid] = sum(v[s.sid]) / period
-        volume
-        #print('[%s] PERIOD : p %s, v %s' % (s, p[s.sid], v[s.sid]))
-                  
-        # Determine min/max of each.  NOTE: volatility is switched
-        # since a low volatility should be weighted highly.
-        minP, maxP = getMinMax(performances)
-        maxV, minV = getMinMax(volatilities)
+        performances[s.sid] = metrics[s.sid]['price']['performance']
+        volatilities[s.sid] = metrics[s.sid]['price']['volatility'][algo]       
+        
+    # Determine min/max of each.  NOTE: volatility is switched
+    # since a low volatility should be weighted highly.
+    min_p, max_p = get_min_max(performances)
+    max_v, min_v = get_min_max(volatilities)
                     
     # Normalize the performance and volatility values to a range
     # between [0..1] then rank them based on a 70/30 weighting.
     for s in basket:
         rank = None
-        pNorm = (performances[s.sid] - minP) / (maxP - minP)
-        vNorm = (volatilities[s.sid] - minV) / (maxV - minV)
+        p_norm = (performances[s.sid] - min_p) / (max_p - min_p)
+        v_norm = (volatilities[s.sid] - min_v) / (max_v - min_v)
 
-        if context.logDebug is True:
-                log.debug('[%s] normP %s, normV %s' % (s.sid, pNorm, vNorm))
+        if context.log_debug is True:
+                log.debug('[%s] normP %s, normV %s' % (s.sid, p_norm, v_norm))
 
-        if not math.isnan(pNorm) and not math.isnan(vNorm):
+        if not math.isnan(p_norm) and not math.isnan(v_norm):
             # Adjust volatility for EDV by 50%
             if s.sid == 22887:
-                rank = (pNorm * pFactor) + ((vNorm * 0.5) * vFactor)
+                rank = (p_norm * p_factor) + ((v_norm * 0.66) * v_factor)
             else:
-                rank = (pNorm * pFactor) + (vNorm * vFactor)
+                rank = (p_norm * p_factor) + (v_norm * v_factor)
                     
-            stockRanks[s] = rank
+            stock_ranks[s] = rank
     
-        if len(stockRanks) > 0:
-            if context.logDebug is True and len(stockRanks) < len(basket):
-                log.debug('FEWER STOCK RANKINGS THAN IN STOCK BASKET!')
-            if context.logRank is True:
-                for s in sorted(stockRanks, key=stockRanks.get, reverse=True):
-                    log.info('RANK [%s] %s' % (s, stockRanks[s]))
-                
-            bestStock = max(stockRanks, key=stockRanks.get)
-        else:
-            if context.logDebug is True:
-                log.debug('NO STOCK RANKINGS FOUND IN BASKET; BEST STOCK IS: NONE')
+    if len(stock_ranks) > 0:
+        if context.log_debug is True and len(stock_ranks) < len(basket):
+            log.debug('FEWER STOCK RANKINGS THAN IN STOCK BASKET!')
+        if context.log_rank is True:
+            for s in sorted(stock_ranks, key=stock_ranks.get, reverse=True):
+                log.info('RANK [%s] %s' % (s, stock_ranks[s]))
+            log.info('---')
+        stock_best = max(stock_ranks, key=stock_ranks.get)
+    else:
+        if context.log_debug is True:
+            log.debug('NO STOCK RANKINGS FOUND IN BASKET; BEST STOCK IS: NONE')
                     
-    return bestStock
+    return stock_best
 
-def hasPositions(context):
-    hasPositions = False
+def positions(context):
+    positions = False
     for p in context.portfolio.positions.values():
         if (p.amount > 0):
-            hasPositions = True
+            positions = True
             break
                 
-    return hasPositions   
+    return positions   
 
-def sellPositions(context):
+def positions_sell(context):
     oid = None
     positions = context.portfolio.positions
            
     try:
-        priceSellStop = context.priceSellStop
+        price_sell_stop = context.price_sell_stop
     except:
-        priceSellStop = 0.0
+        price_sell_stop = 0.0
         
     try:
-        priceSellLimit = context.priceSellLimit
+        price_sell_limit = context.price_sell_limit
     except:
-        priceSellLimit = 0.0
+        price_sell_limit = 0.0
 
     for p in positions.values():
         if (p.amount > 0):
@@ -317,65 +332,65 @@ def sellPositions(context):
             price = p.last_sale_price
             orderValue = price * amount
                 
-            stop = price - priceSellStop
-            limit = stop - priceSellLimit
+            stop = price - price_sell_stop
+            limit = stop - price_sell_limit
 
-            if context.orderSellLimits is True:
-                if context.logSell is True:
+            if context.order_limits_sell is True:
+                if context.log_sell is True:
                     log.info('SELL [%s] (%s) @ $%s (%s) STOP $%s LIMIT $%s' % (p.sid, -amount, price, orderValue, stop, limit))
                 oid = order(p.sid, -amount, limit_price = limit, stop_price = stop)
             else:
-                if context.logSell is True:
+                if context.log_sell is True:
                     log.info('SELL [%s] (%s) @ $%s (%s) MARKET' % (p.sid, -amount, price, orderValue))
                 oid = order(p.sid, -amount)
                 
-            context.sellCount += 1
+            context.count_sell += 1
             
     return oid
 
-def buyPositions(context, data):
+def positions_buy(context, data):
     oid = None
 
     cash = context.portfolio.cash   
-    s = context.basketStockBest
+    s = context.basket_stocks_best
     
     try:
-        priceBuyFactor = context.priceBuyFactor
+        factor_price_buy = context.factor_price_buy
     except:
-        priceBuyFactor = 0.0
+        factor_price_buy = 0.0
         
     try:
-        priceBuyStop = context.priceBuyStop
+        price_buy_stop = context.price_buy_stop
     except:
-        priceBuyStop = 0.0
+        price_buy_stop = 0.0
         
     try:
-        priceBuyLimit = context.priceBuyLimit
+        price_buy_limit = context.price_buy_limit
     except:
-        priceBuyLimit = 0.0
+        price_buy_limit = 0.0
 
     price = data[s.sid].open_price            
-    amount = math.floor(cash / (price + priceBuyFactor))
+    amount = math.floor(cash / (price + factor_price_buy))
     orderValue = price * amount
 
-    stop = price + priceBuyStop
-    limit = stop + priceBuyLimit
+    stop = price + price_buy_stop
+    limit = stop + price_buy_limit
 
     if cash <= 0 or cash < orderValue:
         log.info('BUY ABORT! cash $%s < orderValue $%s' % (cash, orderValue))
     else:           
-        if context.logBuy is True: 
-            if context.orderBuyLimits is True:
+        if context.log_buy is True: 
+            if context.order_limits_buy is True:
                 log.info('BUY [%s] %s @ $%s ($%s of $%s) STOP $%s LIMIT $%s' % (s, amount, price, orderValue, cash, stop, limit))
             else:    
                 log.info('BUY [%s] %s @ $%s ($%s of $%s) MARKET' % (s, amount, price, orderValue, cash))
 
-        if context.orderBuyLimits is True:
+        if context.order_limits_buy is True:
             oid = order(s, amount, limit_price = limit, stop_price = stop)
         else:
             oid = order(s, amount)
             
-        context.buyCount += 1
+        context.count_buy += 1
 
     return oid
 
@@ -386,102 +401,98 @@ def buyPositions(context, data):
 def handle_data(context, data):  
     
     now = get_datetime()
-    buyTime = now + dt.timedelta(hours=2)
+    #buyTime = now + dt.timedelta(hours=2)
     
     # Warn on negative portfolio cash
-    if context.logWarn is True and context.portfolio.cash < 0:
+    if context.log_warn is True and context.portfolio.cash < 0:
         log.warn('NEGATIVE CASH %s' % context.portfolio.cash)
     
     # Process the PREVIOUS DAY
-    if context.nextDate is not None:                    
-        if now >= context.nextDate or now == context.lastDate:
-            if now == context.lastDate:
-                context.bars = accumulateData(data)
+    if context.date_next is not None:                    
+        if now >= context.date_next or now == context.date_backtest_end:
+            if now == context.date_backtest_end:
+                context.bars = accumulate_data(data)
             
             # Collect OCHLV prices for the period
-            context.basketPeriodOchlv.append(basketPeriodOchlv(context))            
+            context.basket_period_ochlv.append(get_basket_period_ochlv(context))      
+            #print context.basket_period_ochlv      
             
             # Fill the lookback period and then get best stock once filled
-            if len(context.basketPeriodOchlv) == (context.metricPeriod + context.metricBuyPeriod):
-                p, v = getBasketPeriodMetrics(context)
-                context.basketStockBest = getBestStock(context, p, v)
-                context.basketAnalyzed = True                
-                del context.basketPeriodOchlv[:context.metricBuyPeriod]
+            if len(context.basket_period_ochlv) == (context.metric_period + context.metric_period_buy):
+                context.basket_stocks_best = get_stock_best(context, get_basket_period_metrics(context))
+                context.basket_analyzed = True                
+                del context.basket_period_ochlv[:context.metric_period_buy]
                 
-            del context.basketStocksActive[:]
-            context.nextDate = None
+            del context.basket_stocks_active[:]
+            context.date_next = None
             
     # Check if SELL completed        
-    if context.oidSell is not None:
-        orderObj = get_order(context.oidSell)
+    if context.oid_sell is not None:
+        orderObj = get_order(context.oid_sell)
         if orderObj.filled == orderObj.amount:
             # Good to buy next holding
-            if context.logSell is True:
+            if context.log_sell is True:
                 log.info('SELL ORDER COMPLETED %s' % now)
-            context.oidSell = None
-            context.oidBuy = buyPositions(context, data)
-            context.currentStock = context.basketStockBest
-            context.basketStockBest = None
+            context.oid_sell = None
+            context.oid_buy = positions_buy(context, data)
+            context.stock_current = context.basket_stocks_best
+            context.basket_stocks_best = None
         else:
-            if context.logSell is True:
+            if context.log_sell is True:
                 log.info('SELL ORDER *NOT* COMPLETED')
             #return
     
     # Check if BUY completed
-    if context.oidBuy is not None:
-        orderObj = get_order(context.oidBuy)
+    if context.oid_buy is not None:
+        orderObj = get_order(context.oid_buy)
         if orderObj.filled == orderObj.amount:
-            if context.logBuy is True:
+            if context.log_buy is True:
                 log.info('BUY ORDER COMPLETED %s' % now)
-            context.oidBuy = None
+            context.oid_buy = None
         else:
-            if context.logBuy is True:
+            if context.log_buy is True:
                 log.info('BUY ORDER *NOT* COMPLETED')
             #return
                         
-    if context.basketAnalyzed is True:
-        if context.basketStockBest is not None:
-            if (context.currentStock == context.basketStockBest):
+    if context.basket_analyzed is True:
+        if context.basket_stocks_best is not None:
+            if (context.stock_current == context.basket_stocks_best):
                 # Hold current
-                if context.logHold is True:
-                    log.info('HOLD [%s]' % context.currentStock)                
-            elif (context.currentStock is None):
+                if context.log_hold is True:
+                    log.info('HOLD [%s]' % context.stock_current)                
+            elif (context.stock_current is None):
                 # Buy best
-                log.info('BUYING [%s]' % context.basketStockBest)
-                context.currentStock = context.basketStockBest
-                context.oidBuy = buyPositions(context, data)
+                log.info('BUYING [%s]' % context.basket_stocks_best)
+                context.stock_current = context.basket_stocks_best
+                context.oid_buy = positions_buy(context, data)
             else:
                 # Sell ALL and Buy best
-                log.info('BUYING [%s]' % context.basketStockBest)
-                if hasPositions(context):
-                    context.oidSell = sellPositions(context)
+                log.info('BUYING [%s]' % context.basket_stocks_best)
+                if positions(context):
+                    context.oid_sell = positions_sell(context)
                 else:
-                    context.oidBuy = buyPositions(context, data)
+                    context.oid_buy = positions_buy(context, data)
         else:
-            if context.logWarn is True:
+            if context.log_warn is True:
                 log.warn('COULD NOT FIND A BEST STOCK! BEST STOCK IS *NONE*')
                 
-        context.basketAnalyzed = False
+        context.basket_analyzed = False
         
     # NOTE: record() can ONLY handle five elements in the graph. Any more than that will runtime error once 5 are exceeded.      
-    record(buy=context.buyCount, sell=context.sellCount, cash=context.portfolio.cash, pnl=context.portfolio.pnl)
-    
+    record(buy=context.count_buy, sell=context.count_sell, cash=context.portfolio.cash, pnl=context.portfolio.pnl)    
         
-    context.bars = accumulateData(data)
+    context.bars = accumulate_data(data)
 
     if context.bars is None:
         return
     
-    if context.nextDate is None:
+    if context.date_next is None:
         # Ensure stocks are only traded if possible.  
-        # (e.g) EDV doesn't start trading until late 2007, without
-        # this, any backtest run before that date would fail.
         for s in context.basket.values():
             if now > s.security_start_date:
-                context.basketStocksActive.append(s)
+                context.basket_stocks_active.append(s)
                 
-        context.nextDate = dt.datetime(int(now.year), int(now.month), int(now.day), 0, 0, 0, 0, pytz.utc) + dt.timedelta(days=1)
-        #print('now %s, nextDate %s' % (now, context.nextDate))
+        context.date_next = dt.datetime(int(now.year), int(now.month), int(now.day), 0, 0, 0, 0, pytz.utc) + dt.timedelta(days=1)
     
     #print type(bars['open_price'][12915]) # TimeSeries
     #print type(bars['open_price']) # DataFrame
@@ -492,5 +503,4 @@ def handle_data(context, data):
     #Major_axis axis: 2013-11-04 14:31:00+00:00 to 2013-11-04 21:00:00+00:00
     #Minor_axis axis: 24705 to 23134
     
-    #stock = getStock(context, datapanel['close_price'][12915])
     return
