@@ -47,9 +47,9 @@ removeCommand = '/bin/rm'
 
 # NOTE: The stocks in the basket must exist in the date range. If not it will error.
 # Looking for Zipline code similar to Quantopian "security_start_date"
-startDateTime = [2011, 01, 01, 0, 0, 0, 0, pytz.utc]
-endDateTime = [2014, 10, 20, 0, 0, 0, 0, pytz.utc]
-basket = ['MDY', 'IEV', 'EEM', 'ILF', 'EPP', 'EDV', 'ZIV', 'SHY']
+startDateTime = [2011, 1, 01, 0, 0, 0, 0, pytz.utc]
+endDateTime = [2014, 10, 21, 0, 0, 0, 0, pytz.utc]
+basket = ['MDY', 'EDV', 'ZIV', 'SHY']
 priceAdjusted = True  # Load Yahoo Bars with adjusted prices or not
 
 @batch_transform
@@ -98,18 +98,14 @@ class GMRE( TradingAlgorithm ):
         # Set the basket of stocks
         self.basket = {
             12915: 'MDY',  # MDY (SPDR S&P MIDCAP 400)
-            21769: 'IEV',  # IEV (ISHARES EUROPE ETF)
-            24705: 'EEM',  # EEM (ISHARES MSCI EMERGING MARKETS)
-            23134: 'ILF',  # ILF (ISHARES LATIN AMERICA 40)
-            23118: 'EPP',  # EPP (ISHARES MSCI PACIFIC EX JAPAN)
             22887: 'EDV',  # EDV (VANGUARD EXTENDED DURATION TREASURY)
             40513: 'ZIV',  # ZIV (VelocityShares Inverse VIX Medium-Term)
             23911: 'SHY',  # SHY (iShares 1-3 Year Treasury Bond ETF)
         }
 
-        self.logWarn = True
-        self.logBuy = True
-        self.logSell = True
+        self.logWarn = False
+        self.logBuy = False
+        self.logSell = False
         self.logHold = True
         self.logRank = False
         self.logDebug = False
@@ -123,6 +119,7 @@ class GMRE( TradingAlgorithm ):
         self.dateStart = None
         self.currentDayNum = None
         self.currentMonth = None
+        self.currentYear = None
         self.currentStock = None
         self.nextStock = None
         self.oidBuy = None
@@ -352,8 +349,8 @@ class GMRE( TradingAlgorithm ):
         date = self.get_datetime()
         month = int( date.month )
         # day = int( date.day )
-        # year = int( date.year )
-        # dayNum = int(date.strftime("%j"))
+        year = int( date.year )
+        dayNum = int( date.strftime( "%j" ) )
         dateStr = date.strftime( '%Y-%m-%d' )
 
         datapanel = self.accumulateData.handle_data( data )
@@ -395,20 +392,29 @@ class GMRE( TradingAlgorithm ):
                 return
 
         # if int(year) == 2013 and int(month) == 11 and int(day) > 25:
-        # print('CurrentDayNum %s, DayNum %s, Year %s, day %s, month %s' % (self.currentDayNum, dayNum, year, day, month))
-        # if self.currentDayNum != None:
-        #    print('PlusDaynum %s + 29 = %s' % (self.currentDayNum, (self.currentDayNum + 29)))
+        # print('CurrentDayNum %s, DayNum %s, Year %s, day %s, month %s' % (self.currentDay, dayNum, year, day, month))
+        # if self.currentDay != None:
+        #    print('PlusDaynum %s + 29 = %s' % (self.currentDay, (self.currentDay + 29)))
 
         if not self.dateStart:
             self.dateStart = date
             self.cashStart = self.portfolio.cash
 
-        # if not self.currentDayNum or dayNum < self.currentDayNum or (self.currentDayNum + 29) <= dayNum or (year == 2013 and month == 11 and day == 27):
-        if not self.currentMonth or self.currentMonth != month:
-            # self.currentDayNum = dayNum
+        if ( self.currentYear is None or self.currentYear != year ):
+            self.currentYear = year
+            gmre.cagr()
+
+        # if not self.currentDay or dayNum < self.currentDay or (self.currentDay + 29) <= dayNum or (year == 2013 and month == 11 and day == 27):
+        if ( not self.currentMonth or self.currentMonth != month ):
             self.currentMonth = month
-            self.cagr()
-            self.period_performance()
+            self.currentDayNum = dayNum
+            # self.cagr()
+            # self.period_performance()
+            self.period_start_portfolio_value = self.portfolio.portfolio_value
+        elif ( dayNum >= self.currentDayNum + 15 ):
+            self.currentDayNum = dayNum
+            # self.cagr()
+            # self.period_performance()
             self.period_start_portfolio_value = self.portfolio.portfolio_value
         else:
             return
@@ -435,6 +441,7 @@ class GMRE( TradingAlgorithm ):
                 # Buy best
                 self.currentStock = best
                 self.nextStock = best
+                print( '%s: BUYING [%s]' % ( dateStr, best ) )
                 self.oidBuy = self.buyPositions( data, dateStr )
             else:
                 # Sell ALL and Buy best
@@ -463,7 +470,7 @@ class GMRE( TradingAlgorithm ):
         date = self.get_datetime()
         dateStr = date.strftime( '%Y-%m-%d' )
 
-        cagr_period = "Start"
+        cagr_period = "START"
         inverse_period = 0
 
         # Calculate Compound Annual Growth Rate (CAGR)
@@ -471,14 +478,14 @@ class GMRE( TradingAlgorithm ):
         period = 365.2425
 
         if ( dateDelta.days > 365 ):
-            cagr_period = "Yearly"
+            cagr_period = "YEARLY"
             inverse_period = 1.0 / ( dateDelta.days / period )
         elif ( dateDelta.days > 0 ):
             if ( dateDelta.days > 28 and dateDelta.days <= 365 ):
-                cagr_period = "Monthly"
+                cagr_period = "MONTHLY"
                 inverse_period = 1.0 / ( dateDelta.days / ( period / 12 ) )
             else:
-                cagr_period = "Daily"
+                cagr_period = "DAILY"
                 inverse_period = 1.0 / ( dateDelta.days )
 
         performance = ( self.portfolio.portfolio_value / self.cashStart )
