@@ -42,7 +42,7 @@ import math
 import pytz
 
 
-ziplineDataPath = '/home/j13/.zipline/data/*'
+ziplineDataPath = '/home/<userName>/.zipline/data/*'
 removeCommand = '/bin/rm'
 
 # NOTE: The stocks in the basket must exist in the date range. If not it will error.
